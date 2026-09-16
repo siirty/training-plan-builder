@@ -18,7 +18,7 @@ test("weeksBetween handles ~8 weeks out", () => {
 });
 
 // --- single-event plan keeps the core invariants ---
-const single = buildPlan([ev(56, "Target Race", "A")], 240, 6, "endurance");
+const single = buildPlan([ev(56, "Target Race", "A")], 240, 6, "endurance", 20);
 
 test("single-event plan has 8 weeks", () => {
   assert.equal(single.weeksTotal, 8);
@@ -53,6 +53,14 @@ test("ramp cap applies between consecutive WORK weeks (deloads don't cap re-entr
     lastWorkHours = w.hours;
   }
 });
+test("long seasons plateau — peak volume never exceeds the user's maxWorkHours", () => {
+  // regression: 200-day season starting at 12h/week once exploded to 62h/week
+  const longP = buildPlan([ev(200, "Long Season", "A")], 250, 12, "threshold", 18);
+  const peakV = Math.max(...longP.weeks.map(w => w.hours));
+  assert.ok(peakV <= 18.1, `peak ${peakV}h exceeds the 18h user ceiling`);
+  assert.ok(peakV <= longP.weeks[0].hours + 6 + 1e-6, `peak ${peakV}h rises too fast off start`);
+});
+
 test("final (taper) week is low volume — always below the season's peak work week", () => {
   const peaks = single.weeks.filter(w => w.phase === "Build" || w.phase === "Base" || w.phase === "Race");
   const peakVol = Math.max(...peaks.map(w => w.hours));
@@ -65,7 +73,7 @@ test("final (taper) week is low volume — always below the season's peak work w
 // --- multi-event: B/C microcycles ---
 const multi = buildPlan(
   [ev(60, "Spring Criterium", "B"), ev(110, "Regionals", "B"), ev(160, "Nationals", "A")],
-  240, 6, "threshold",
+  240, 6, "threshold", 20,
 );
 
 test("multi-event plan sorts events, final promoted to A", () => {

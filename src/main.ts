@@ -5,6 +5,7 @@ const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as
 
 const ftp = $("#ftp") as HTMLInputElement;
 const hours = $("#hours") as HTMLInputElement;
+const maxHours = $("#maxhours") as HTMLInputElement;
 const focus = $("#focus") as HTMLSelectElement;
 const eventList = $("#event-list") as HTMLDivElement;
 const addEventBtn = $("#add-event") as HTMLButtonElement;
@@ -65,7 +66,7 @@ goBtn.addEventListener("click", () => {
     priority: r.prio.value as Priority,
   })).filter(r => r.dateISO);
   if (events.length === 0) { alert("Add at least one event date."); return; }
-  const plan = buildPlan(events, Number(ftp.value), Number(hours.value), focus.value as any);
+  const plan = buildPlan(events, Number(ftp.value), Number(hours.value), focus.value as any, Number(maxHours.value));
   render(plan);
 });
 

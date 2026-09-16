@@ -39,9 +39,13 @@ const IF: Record<PhaseName, number> = {
   Base: 0.72, Build: 0.88, Peak: 0.95, Taper: 0.55, Race: 0.95, Recover: 0.5,
 };
 const GAIN_PER_WEEK = 0.08; // +8% volume per work week
-const RAMP_CAP = 0.25;      // never exceed +25% volume vs the previous work week
 
-export function buildPlan(events: RaceEvent[], ftp: number, startHours: number, focus: Focus): Plan {
+// Volume does NOT compound forever: cap the season's peak weekly volume at
+// maxWorkHours (a user input — "max weekly hours your schedule allows").
+// Without a ceiling, weekly hours would compound to physically absurd values
+// on long seasons (regression: 12h start once exploded to 62h/week).
+
+export function buildPlan(events: RaceEvent[], ftp: number, startHours: number, focus: Focus, maxWorkHours: number): Plan {
   const sorted = [...events].sort((a, b) => a.dateISO.localeCompare(b.dateISO));
   const finalIdx = sorted.length - 1;
   const consumed = sorted.map((e, i) => (i === finalIdx ? { ...e, priority: "A" as Priority } : e));
@@ -69,6 +73,7 @@ export function buildPlan(events: RaceEvent[], ftp: number, startHours: number, 
 
   const weeks: WeekPlan[] = [];
   let lastWork = startHours;   // hours of the most recent full work week (progressive-overload anchor)
+  const RAMP_CAP = 0.25;       // never add more than +25% of START per week (stops runaway compounding)
   for (let w = 1; w <= totalWeeks; w++) {
     const { phase, event } = phaseFor(w);
     let hours: number;
@@ -80,8 +85,14 @@ export function buildPlan(events: RaceEvent[], ftp: number, startHours: number, 
     } else if (phase === "Peak") {
       hours = lastWork * 0.9;   // ~10% cut from the build peak, does NOT advance the taper anchor
     } else {
-      // Base / Build / Race: progressive overload +8%, capped +25%
-      hours = Math.min(lastWork * (1 + GAIN_PER_WEEK), lastWork + startHours * RAMP_CAP);
+      // Base / Build / Race: progressive overload +8%, capped to +25% of the
+      // START volume per week (not +25% of last week — that's what exploded),
+      // and NEVER above the season peak ceiling. Long seasons plateau.
+      hours = Math.min(
+        lastWork * (1 + GAIN_PER_WEEK),        // slow ramp
+        lastWork + startHours * RAMP_CAP,      // +25% of start, not last week
+        maxWorkHours,                          // user's sustainable ceiling — long seasons plateau here
+      );
       lastWork = hours;
     }
     hours = Math.max(2, hours);
