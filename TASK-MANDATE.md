@@ -54,3 +54,10 @@ Keep this surfaced (see slice #5).
 
 ## STATUS LOG
 (Slice 0 = this mandate, merged first, trivial docs PR.)
+- #1 docs: UI/UX pass mandate (slice/0) — merged.
+- #2 theme: dark/light, system default, persisted (slice/1) — merged.
+- #3 live: recompute on input, drop Build button (slice/2) — merged.
+- #4 ui: stepped single-hue timeline hero (slice/3) — merged.
+- #5 ui: timeline<->table linkage (slice/4) — merged.
+- #6 docs: README UI/UX pass (slice/5) — merged.
+Feature branch `ui-ux-pass` COMPLETE. LEFT UN-MERGED INTO `main` for user review (all slices merged on local green gate; NO runner CI exists — gh token lacks `workflow` scope, so no Actions workflow).
