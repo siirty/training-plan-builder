@@ -3,6 +3,20 @@ import "./style.css";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
+// --- theme: system default on first visit, manual toggle persisted ---
+const themeToggle = $("#themeToggle") as HTMLButtonElement;
+function currentTheme(): "dark" | "light" {
+  const attr = document.documentElement.getAttribute("data-theme");
+  if (attr === "dark" || attr === "light") return attr;
+  // follow OS
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+function applyTheme(t: "dark" | "light") {
+  document.documentElement.setAttribute("data-theme", t);
+  try { localStorage.setItem("tp-theme", t); } catch (e) { /* private mode */ }
+}
+themeToggle.addEventListener("click", () => applyTheme(currentTheme() === "dark" ? "light" : "dark"));
+
 const ftp = $("#ftp") as HTMLInputElement;
 const hours = $("#hours") as HTMLInputElement;
 const maxHours = $("#maxhours") as HTMLInputElement;
