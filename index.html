@@ -8,14 +8,15 @@
 <body>
   <main class="wrap">
     <h1>Periodization Plan Builder</h1>
-    <p class="sub">Plan a Base &rarr; Build &rarr; Peak cycle around your key event, grounded in Critical-Power / TSS modeling.</p>
+    <p class="sub">Plan a multi-event season around a key (A) target, grounded in Critical-Power / TSS modeling.</p>
 
     <section class="card" id="inputs">
-      <h2>Your inputs</h2>
+      <h2>1 · Events</h2>
+      <div id="event-list"></div>
+      <button id="add-event" class="ghost">+ Add event</button>
+
+      <h2 class="mt">2 · You</h2>
       <div class="grid">
-        <label>Goal / event date
-          <input type="date" id="goal-date" />
-        </label>
         <label>Current FTP / CP (W)
           <input type="number" id="ftp" min="50" max="600" value="240" />
         </label>
@@ -37,6 +38,7 @@
     <section class="card" id="summary" hidden>
       <h2>Plan summary</h2>
       <div id="summaryBody" class="kv"></div>
+      <div id="phaseLegend" class="legend"></div>
     </section>
 
     <section class="card" id="chart" hidden>
@@ -46,12 +48,16 @@
 
     <section class="card" id="grid" hidden>
       <h2>Weekly sessions</h2>
-      <table id="planTable">
-        <thead><tr></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="table-scroll">
+        <table id="planTable">
+          <thead><tr></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
       <button id="csv">Export CSV</button>
     </section>
+
+    <p class="disc">This tool generates <b>sensible defaults, not coaching advice</b>. Phase splits, intensity factors (IF), and volume ramps are reasonable approximations; adapt them to your training history and, ideally, a coach. No medical/training liability implied.</p>
   </main>
   <script type="module" src="/src/main.ts"></script>
 </body>

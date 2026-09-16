@@ -1,21 +1,71 @@
-import { buildPlan, weeksBetween, type Plan, type WeekPlan } from "./engine";
+import { buildPlan, weeksBetween, type Plan, type RaceEvent, type Priority } from "./engine";
 import "./style.css";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
-const goalDate = $("#goal-date") as HTMLInputElement;
 const ftp = $("#ftp") as HTMLInputElement;
 const hours = $("#hours") as HTMLInputElement;
 const focus = $("#focus") as HTMLSelectElement;
+const eventList = $("#event-list") as HTMLDivElement;
+const addEventBtn = $("#add-event") as HTMLButtonElement;
+const goBtn = $("#go") as HTMLButtonElement;
 
-// sensible default: 8 weeks out, tomorrow
+interface EventRow {
+  row: HTMLDivElement;
+  date: HTMLInputElement;
+  name: HTMLInputElement;
+  prio: HTMLSelectElement;
+}
+
+const rows: EventRow[] = [];
+
+// one default event, 12 weeks out
 (function init() {
-  const d = new Date(Date.now() + 8 * 7 * 86400_000);
-  goalDate.value = d.toISOString().slice(0, 10);
+  const d = new Date(Date.now() + 12 * 7 * 86400_000);
+  addEventRow(d.toISOString().slice(0, 10), "Key event", "A");
 })();
 
-$("#go").addEventListener("click", () => {
-  const plan = buildPlan(goalDate.value, Number(ftp.value), Number(hours.value), focus.value as any);
+addEventBtn.addEventListener("click", () => {
+  const d = new Date(Date.now() + 12 * 7 * 86400_000);
+  addEventRow(d.toISOString().slice(0, 10), "Race", "B");
+});
+
+function addEventRow(date: string, name: string, prio: Priority) {
+  const row = document.createElement("div");
+  row.className = "evrow";
+  row.innerHTML = `
+    <input type="date" class="ev-date" value="${date}" />
+    <input type="text" class="ev-name" placeholder="Race name" value="${name}" />
+    <select class="ev-prio">
+      <option value="A">A (key)</option>
+      <option value="B">B (secondary)</option>
+      <option value="C">C (fitness)</option>
+    </select>
+    <button type="button" class="ev-del" title="Remove">&times;</button>`;
+  const r = {
+    row,
+    date: row.querySelector(".ev-date") as HTMLInputElement,
+    name: row.querySelector(".ev-name") as HTMLInputElement,
+    prio: row.querySelector(".ev-prio") as HTMLSelectElement,
+  };
+  r.prio.value = prio;
+  (row.querySelector(".ev-del") as HTMLButtonElement).addEventListener("click", () => {
+    const i = rows.indexOf(r);
+    if (i >= 0) rows.splice(i, 1);
+    row.remove();
+  });
+  rows.push(r);
+  eventList.appendChild(row);
+}
+
+goBtn.addEventListener("click", () => {
+  const events: RaceEvent[] = rows.map(r => ({
+    dateISO: r.date.value,
+    name: r.name.value.trim() || "Race",
+    priority: r.prio.value as Priority,
+  })).filter(r => r.dateISO);
+  if (events.length === 0) { alert("Add at least one event date."); return; }
+  const plan = buildPlan(events, Number(ftp.value), Number(hours.value), focus.value as any);
   render(plan);
 });
 
@@ -24,21 +74,26 @@ function render(p: Plan) {
   $("#chart").hidden = false;
   $("#grid").hidden = false;
 
+  const phases = new Set(p.weeks.map(w => w.phase));
+  $("#phaseLegend").innerHTML = Array.from(phases)
+    .map(ph => `<span class="lg ${ph.toLowerCase()}"><i></i>${ph}</span>`).join("");
+
   $("#summaryBody").innerHTML = [
     `Duration <b>${p.weeksTotal} weeks</b>`,
     `FTP <b>${p.ftp} W</b>`,
     `Start volume <b>${p.weeks[0].hours}h / wk</b>`,
     `Taper finish <b>${p.endHours}h / wk</b>`,
     `Max load <b>${Math.max(...p.weeks.map(w => w.tss))} TSS</b> / wk`,
+    `Events <b>${p.events.length}</b>`,
   ].join('<div class="row"></div>');
 
-  // chart
+  // chart: color bars by phase so the shape is readable
   const maxTss = Math.max(...p.weeks.map(w => w.tss), 1);
   const chart = $("#chartBody");
   chart.innerHTML = "";
   p.weeks.forEach(w => {
     const el = document.createElement("div");
-    el.className = "bar";
+    el.className = `bar bar-${w.phase.toLowerCase()}`;
     el.style.height = `${Math.round((w.tss / maxTss) * 100)}%`;
     el.title = `W${w.week} ${w.phase} · ${w.tss} TSS`;
     chart.appendChild(el);
@@ -46,22 +101,21 @@ function render(p: Plan) {
 
   // table
   const thead = $("#planTable thead tr");
-  thead.innerHTML = ["Week", "Phase", "Hours", "IF", "TSS", "Focus"].map(h => `<th>${h}</th>`).join("");
+  thead.innerHTML = ["Week", "Phase", "Hours", "IF", "TSS", "Event", "Focus"].map(h => `<th>${h}</th>`).join("");
   const tbody = $("#planTable tbody");
   tbody.innerHTML = p.weeks.map(w => `
     <tr class="${w.phase.toLowerCase()}">
       <td>${w.week}</td><td>${w.phase}</td><td>${w.hours}</td>
-      <td>${w.ifVal.toFixed(2)}</td><td>${w.tss}</td><td>${w.focus}</td>
+      <td>${w.ifVal.toFixed(2)}</td><td>${w.tss}</td><td>${w.event ?? "&mdash;"}</td><td>${w.focus}</td>
     </tr>`).join("");
 
-  // CSV
   $("#csv").onclick = () => {
-    const rows = ["week,phase,hours,if,tss,focus",
-      ...p.weeks.map(w => `${w.week},${w.phase},${w.hours},${w.ifVal.toFixed(2)},${w.tss},"${w.focus}"`)];
+    const rows = ["week,phase,hours,if,tss,event,focus",
+      ...p.weeks.map(w => `${w.week},${w.phase},${w.hours},${w.ifVal.toFixed(2)},${w.tss},"${w.event ?? ""}","${w.focus}"`)];
     const blob = new Blob([rows.join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "periodization-plan.csv";
+    a.download = "training-plan.csv";
     a.click();
   };
 }
