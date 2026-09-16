@@ -53,10 +53,13 @@ test("ramp cap applies between consecutive WORK weeks (deloads don't cap re-entr
     lastWorkHours = w.hours;
   }
 });
-test("final week is low-volume taper", () => {
+test("final (taper) week is low volume — always below the season's peak work week", () => {
+  const peaks = single.weeks.filter(w => w.phase === "Build" || w.phase === "Base" || w.phase === "Race");
+  const peakVol = Math.max(...peaks.map(w => w.hours));
   const last = single.weeks[single.weeks.length - 1];
-  assert.ok(last.phase === "Taper");
-  assert.ok(last.hours < single.weeks[0].hours * 0.8);
+  assert.equal(last.phase, "Taper");
+  assert.ok(last.hours < peakVol * 0.7, `taper ${last.hours}h not below 70% of peak ${peakVol}h`);
+  assert.ok(last.hours < single.weeks[0].hours, `taper finish ${last.hours}h not below start ${single.weeks[0].hours}h`);
 });
 
 // --- multi-event: B/C microcycles ---
