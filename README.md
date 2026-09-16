@@ -11,7 +11,15 @@ A tiny, single-page tool that turns your **race calendar** + **FTP** + **weekly 
 - **Progressive overload**: volume ramps ~+8%/work-week, capped +25% over the previous *work* week (deloads don't cap re-entry).
 - Load via `TSS ≈ hours × 100 × IF²` (TrainingPeaks-style); phase IFs Base 0.72 / Build 0.88 / Peak 0.95 / Race 0.95 / Recover 0.5 / Taper 0.55.
 - Taper anchored to the achieved build peak (cut to 60% then 40%) — a genuine taper, verified by regression test.
-- Renders a phase-colored load chart + legend, a full weekly table (horizontally scrollable on mobile), and CSV export.
+- Renders a stepped single-hue load timeline, a full weekly table (horizontally scrollable on mobile, linked to the timeline), and CSV export.
+
+## UI/UX (2026) — clean + calm design pass
+
+Single-screen workbench, live recompute (no "Build" button), dark + light with a
+persisted toggle (system default first). Hero is a stepped single-hue timeline:
+week-level height = TSS load, Base→Build→Peak as a teal ramp, Race = bright
+accent, Recover/Taper = muted, and the timeline is linked to the weekly table
+(hover highlights; click scrolls).
 
 ## Values used — honest sourcing
 
