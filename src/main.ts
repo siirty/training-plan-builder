@@ -121,13 +121,13 @@ function render(p: Plan) {
     `Events <b>${p.events.length}</b>`,
   ].join('<div class="row"></div>');
 
-  // chart: bar-chart shape (timeline hero ships in a later slice)
+  // timeline hero: stepped load, single-hue phase ramp, week-level height = TSS
   const maxTss = Math.max(...p.weeks.map(w => w.tss), 1);
   const chart = $("#chartBody");
   chart.innerHTML = "";
   p.weeks.forEach(w => {
     const el = document.createElement("div");
-    el.className = `bar bar-${w.phase.toLowerCase()}`;
+    el.className = `span ${w.phase.toLowerCase()}`;
     el.style.height = `${Math.round((w.tss / maxTss) * 100)}%`;
     el.title = `W${w.week} ${w.phase} · ${w.tss} TSS`;
     chart.appendChild(el);
