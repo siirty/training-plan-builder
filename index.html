@@ -4,8 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Periodization Plan Builder</title>
+  <script>
+    // Set theme BEFORE paint to avoid a flash: read persisted choice, else OS default.
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem("tp-theme"); } catch (e) {}
+      if (t !== "dark" && t !== "light") t = null; // no saved pref -> follow OS
+      if (t) document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
 </head>
 <body>
+  <button class="theme-toggle" id="themeToggle" title="Toggle theme" aria-label="Toggle dark / light theme">◐</button>
   <main class="wrap">
     <h1>Periodization Plan Builder</h1>
     <p class="sub">Plan a multi-event season around a key (A) target, grounded in Critical-Power / TSS modeling.</p>
