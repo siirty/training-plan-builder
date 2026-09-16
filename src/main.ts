@@ -1,4 +1,4 @@
-import { buildPlan, weeksBetween, type Plan, type RaceEvent, type Priority } from "./engine";
+import { buildPlan, weeksBetween, type Plan, type RaceEvent, type Priority, type Sport } from "./engine";
 import "./style.css";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -6,6 +6,7 @@ const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as
 const ftp = $("#ftp") as HTMLInputElement;
 const hours = $("#hours") as HTMLInputElement;
 const maxHours = $("#maxhours") as HTMLInputElement;
+const sport = $("#sport") as HTMLSelectElement;
 const focus = $("#focus") as HTMLSelectElement;
 const eventList = $("#event-list") as HTMLDivElement;
 const addEventBtn = $("#add-event") as HTMLButtonElement;
@@ -66,7 +67,7 @@ goBtn.addEventListener("click", () => {
     priority: r.prio.value as Priority,
   })).filter(r => r.dateISO);
   if (events.length === 0) { alert("Add at least one event date."); return; }
-  const plan = buildPlan(events, Number(ftp.value), Number(hours.value), focus.value as any, Number(maxHours.value));
+  const plan = buildPlan(events, Number(ftp.value), Number(hours.value), focus.value as any, Number(maxHours.value), sport.value as Sport);
   render(plan);
 });
 
@@ -102,17 +103,18 @@ function render(p: Plan) {
 
   // table
   const thead = $("#planTable thead tr");
-  thead.innerHTML = ["Week", "Phase", "Hours", "IF", "TSS", "Event", "Focus"].map(h => `<th>${h}</th>`).join("");
+  thead.innerHTML = ["Week", "Phase", "Hrs", "IF", "TSS", "Event", "Focus", "Str", "Strength"].map(h => `<th>${h}</th>`).join("");
   const tbody = $("#planTable tbody");
   tbody.innerHTML = p.weeks.map(w => `
     <tr class="${w.phase.toLowerCase()}">
       <td>${w.week}</td><td>${w.phase}</td><td>${w.hours}</td>
       <td>${w.ifVal.toFixed(2)}</td><td>${w.tss}</td><td>${w.event ?? "&mdash;"}</td><td>${w.focus}</td>
+      <td>${w.strength.sessions}</td><td>${w.strength.notes}</td>
     </tr>`).join("");
 
   $("#csv").onclick = () => {
-    const rows = ["week,phase,hours,if,tss,event,focus",
-      ...p.weeks.map(w => `${w.week},${w.phase},${w.hours},${w.ifVal.toFixed(2)},${w.tss},"${w.event ?? ""}","${w.focus}"`)];
+    const rows = ["week,block,phase,hours,if,tss,event,focus,strength_sessions,strength_notes",
+      ...p.weeks.map(w => `${w.week},${w.block},${w.phase},${w.hours},${w.ifVal.toFixed(2)},${w.tss},"${w.event ?? ""}","${w.focus}",${w.strength.sessions},"${w.strength.notes}"`)];
     const blob = new Blob([rows.join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);

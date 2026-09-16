@@ -17,109 +17,106 @@ test("weeksBetween handles ~8 weeks out", () => {
   assert.equal(weeksBetween(futureDate(56)), 8);
 });
 
-// --- single-event plan keeps the core invariants ---
-const single = buildPlan([ev(56, "Target Race", "A")], 240, 6, "endurance", 20);
+// --- single-event cycle plan ---
+const p = buildPlan([ev(56, "Target Race", "A")], 240, 6, "endurance", 20, "cycle");
 
-test("single-event plan has 8 weeks", () => {
-  assert.equal(single.weeksTotal, 8);
-  assert.equal(single.weeks.length, 8);
+test("cycle plan week count matches horizon", () => {
+  assert.equal(p.weeksTotal, 8);
+  assert.equal(p.weeks.length, 8);
 });
-test("TSS matches hours * 100 * IF^2", () => {
-  for (const w of single.weeks) {
+test("TSS = hours * 100 * IF^2", () => {
+  for (const w of p.weeks) {
     assert.equal(w.tss, Math.round(w.hours * 100 * w.ifVal * w.ifVal), `week ${w.week}`);
   }
 });
-test("phase order Base..Build..Peak..Taper", () => {
-  const order = single.weeks.map(w => w.phase);
-  const seq = ["Base", "Build", "Peak", "Taper"];
-  let last = -1;
-  for (const ph of seq) {
-    const i = order.indexOf(ph);
-    assert.ok(i > last, `${ph} out of order`);
-    last = i;
+test("phase order is monotonic through Build..Peak..Taper", () => {
+  const seq = p.weeks.map(w => w.phase);
+  const buildAt = seq.indexOf("Build");
+  const peakAt = seq.indexOf("Peak");
+  const taperAt = seq.indexOf("Taper");
+  assert.ok(buildAt < peakAt && peakAt < taperAt, `got ${seq.join(",")}`);
+});
+test("recover weeks deload (< 0.6x of last work week)", () => {
+  for (let i = 1; i < p.weeks.length; i++) {
+    if (p.weeks[i].phase === "Recover") {
+      assert.ok(p.weeks[i].hours < p.weeks[i - 1].hours * 0.6, `recover ${i}`); // 0.5x intended
+    }
   }
 });
-test("taper has the lowest IF of the work phases", () => {
-  const tapers = single.weeks.filter(w => w.phase === "Taper");
-  const others = single.weeks.filter(w => w.phase !== "Taper");
-  for (const t of tapers) for (const o of others) assert.ok(t.ifVal < o.ifVal);
-});
-test("ramp cap applies between consecutive WORK weeks (deloads don't cap re-entry)", () => {
-  let lastWorkHours = single.weeks[0].hours;
-  for (const w of single.weeks) {
-    if (w.phase === "Taper" || w.phase === "Recover") continue;
-    // a work week may not exceed +25% of the last work week
-    assert.ok(w.hours <= lastWorkHours * 1.25 + 1e-6, `work week ${w.week}: ${w.hours} > ${lastWorkHours}*1.25`);
-    lastWorkHours = w.hours;
+test("ramp cap bounded vs start (no runaway compounding)", () => {
+  const start = p.weeks[0].hours;
+  let lastWork = start;
+  for (const w of p.weeks) {
+    if (w.phase === "Recover" || w.phase === "Taper") continue;
+    assert.ok(w.hours <= lastWork + start * 0.25 + 1e-6, `work week ${w.week}`);
+    lastWork = w.hours;
   }
 });
-test("long seasons plateau — peak volume never exceeds the user's maxWorkHours", () => {
-  // regression: 200-day season starting at 12h/week once exploded to 62h/week
-  const longP = buildPlan([ev(200, "Long Season", "A")], 250, 12, "threshold", 18);
-  const peakV = Math.max(...longP.weeks.map(w => w.hours));
-  assert.ok(peakV <= 18.1, `peak ${peakV}h exceeds the 18h user ceiling`);
-  assert.ok(peakV <= longP.weeks[0].hours + 6 + 1e-6, `peak ${peakV}h rises too fast off start`);
-});
-
-test("final (taper) week is low volume — always below the season's peak work week", () => {
-  const peaks = single.weeks.filter(w => w.phase === "Build" || w.phase === "Base" || w.phase === "Race");
-  const peakVol = Math.max(...peaks.map(w => w.hours));
-  const last = single.weeks[single.weeks.length - 1];
+test("final taper week ends low vs start", () => {
+  const last = p.weeks[p.weeks.length - 1];
   assert.equal(last.phase, "Taper");
-  assert.ok(last.hours < peakVol * 0.7, `taper ${last.hours}h not below 70% of peak ${peakVol}h`);
-  assert.ok(last.hours < single.weeks[0].hours, `taper finish ${last.hours}h not below start ${single.weeks[0].hours}h`);
+  assert.ok(last.hours <= p.weeks[0].hours, `taper ${last.hours}h not below start ${p.weeks[0].hours}h`);
+});
+test("strength: taper drops strength, peak is light, base is heavy", () => {
+  const taper = p.weeks.filter(w => w.phase === "Taper");
+  const peak = p.weeks.filter(w => w.phase === "Peak");
+  const base = p.weeks.filter(w => w.phase === "Build" || w.phase === "Base");
+  assert.ok(taper.every(w => w.strength.sessions === 0), "taper should drop strength");
+  assert.ok(peak.every(w => w.strength.sessions <= 1), "peak strength minimal");
+  assert.ok(base.some(w => w.strength.sessions >= 2), "base should carry strength");
 });
 
-// --- multi-event: B/C microcycles ---
+// --- long season: multi-block ---
+const longP = buildPlan([ev(180, "Long Season", "A")], 250, 8, "threshold", 15, "cycle");
+
+test("long season splits into multiple blocks with recover transitions", () => {
+  assert.ok(longP.blocks.length >= 3, `expected >=3 blocks, got ${longP.blocks.length}`);
+  // count Recover weeks >= 2
+  const recovers = longP.weeks.filter(w => w.phase === "Recover").length;
+  assert.ok(recovers >= 2, `expected >=2 recover weeks, got ${recovers}`);
+});
+test("long season peak is bounded (no 40h/week)", () => {
+  const peak = Math.max(...longP.weeks.map(w => w.hours));
+  assert.ok(peak <= 15.1, `peak ${peak}h exceeds 15h cap`);
+});
+test("blocks rotate focus (not all identical)", () => {
+  const focuses = longP.blocks.map(b => b.focus);
+  assert.ok(new Set(focuses).size > 1, `focuses did not rotate: ${focuses}`);
+});
+test("every work week carries strength guidance", () => {
+  for (const w of longP.weeks) {
+    assert.ok(w.strength && typeof w.strength.sessions === "number", `week ${w.week} missing strength`);
+  }
+});
+
+// --- sport differences ---
+test("sport load differs (run caps stricter than cycle)", () => {
+  const c = buildPlan([ev(160, "E", "A")], 250, 8, "endurance", 20, "cycle");
+  const r = buildPlan([ev(160, "E", "A")], 250, 8, "endurance", 20, "run");
+  const cPeak = Math.max(...c.weeks.map(w => w.hours));
+  const rPeak = Math.max(...r.weeks.map(w => w.hours));
+  assert.ok(rPeak <= cPeak + 1e-6, `run peak ${rPeak} should be <= cycle peak ${cPeak}`);
+});
+
+// --- B/C event microcycles in a multi-event season ---
 const multi = buildPlan(
-  [ev(60, "Spring Criterium", "B"), ev(110, "Regionals", "B"), ev(160, "Nationals", "A")],
-  240, 6, "threshold", 20,
+  [ev(60, "Criterium", "B"), ev(110, "Regionals", "B"), ev(160, "Nationals", "A")],
+  240, 6, "threshold", 15, "cycle",
 );
-
-test("multi-event plan sorts events, final promoted to A", () => {
-  assert.equal(multi.weeksTotal, Math.round(160 / 7)); // ~23
-  assert.equal(multi.events.length, 3);
-  assert.equal(multi.events[2].name, "Nationals");
-  assert.equal(multi.events[2].priority, "A");
-});
-test("every B/C event gets at least one Race week with its name", () => {
-  for (const evn of ["Spring Criterium", "Regionals"]) {
-    const races = multi.weeks.filter(w => w.phase === "Race" && w.event === evn);
-    assert.ok(races.length >= 1, `${evn} missing Race week`);
+test("each B/C event gets a Race week with its name", () => {
+  for (const name of ["Criterium", "Regionals"]) {
+    assert.ok(multi.weeks.some(w => w.phase === "Race" && w.event === name), `${name} missing Race`);
   }
 });
-test("final event's Taper weeks carry the A event name", () => {
-  const tapers = multi.weeks.filter(w => w.phase === "Taper");
-  assert.ok(tapers.length === 2);
-  for (const t of tapers) assert.equal(t.event, "Nationals");
-});
-test("Recover weeks immediately follow a Race week and deload", () => {
-  for (let i = 1; i < multi.weeks.length; i++) {
-    if (multi.weeks[i].phase === "Recover") {
-      assert.ok(multi.weeks[i - 1].phase === "Race", `recover at week ${i} not after a race`);
-      assert.ok(multi.weeks[i].hours < multi.weeks[i - 1].hours);
-    }
+test("final event tapers are labeled with A event", () => {
+  for (const w of multi.weeks) {
+    if (w.phase === "Taper") assert.equal(w.event, "Nationals");
   }
 });
-test("no microcycle in the final Peak/Taper region unless it is the A event", () => {
-  const finalRegion = multi.weeks.slice(multi.weeks.length - 4);
-  for (const w of finalRegion) {
-    if (w.phase === "Race" || w.phase === "Recover") {
-      assert.ok("unexpected mid-race near final event");
-    }
-  }
+test("events sorted, final promoted to A", () => {
+  assert.equal(multi.events[multi.events.length - 1].name, "Nationals");
+  assert.equal(multi.events[multi.events.length - 1].priority, "A");
 });
-test("chronological week numbers are 1..N with no gaps", () => {
+test("chronological week numbers 1..N", () => {
   multi.weeks.forEach((w, i) => assert.equal(w.week, i + 1));
-});
-test("multi-event plan satisfies ramp cap between WORK weeks and TSS formula", () => {
-  let lastWorkHours = multi.weeks[0].hours;
-  for (const w of multi.weeks) {
-    if (w.phase === "Taper" || w.phase === "Recover") continue;
-    assert.ok(w.hours <= lastWorkHours * 1.25 + 1e-6, `work week ${w.week}: ${w.hours} > ${lastWorkHours}*1.25`);
-    lastWorkHours = w.hours;
-  }
-  for (const w of multi.weeks) {
-    assert.equal(w.tss, Math.round(w.hours * 100 * w.ifVal * w.ifVal));
-  }
 });

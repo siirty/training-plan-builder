@@ -1,186 +1,249 @@
-// periodization engine (multi-event season)
-// Load model (TrainingPeaks-style): weeklyTSS = hours * 100 * IF^2
-// Season model:
-//   - Weeks are chronological from today (week 1 = next week) through the A-priority final event.
-//   - BASE block first (≈40%), then a BUILD region, then PEAK (≈15%) and a 2-week TAPER into the A event.
-//   - B/C priority events embedded in the BUILD region get a RACE week + RECOVER (deload) week,
-//     then training resumes toward the next event.
-// Volume ramps globally ~+8%/week (capped +25%/week) around a base ramp; phase multipliers shape the week.
+// periodization engine v2 — multi-block season + strength axis + sport-aware load
+//
+// Theory:
+//  - Linear periodization is only correct for a ~4–20 week horizon. Long
+//    seasons are broken into repeated MACROBLOCKS (Issurin-style block
+//    periodization): each block rotates a quality emphasis, ~4 work weeks with
+//    progressive volume, then a 1-week RECOVER transition. The A event always
+//    gets a fixed PEAK + 2-week TAPER.
+//  - STRENGTH is a SEPARATE axis (concurrent periodization). It NEVER merges
+//    into the aerobic hours*IF² load. It periodizes opposite to the aerobic
+//    peak: accumulation (3/wk) in Base → intensification (2/wk) in Build →
+//    realization (1/wk) near-peak → dropped in the final taper.
+//  - Load is sport-aware: cycling uses native TSS (power); running a translated
+//    R-TSS with stricter ramp caps (impact stress); swimming is an approximation.
+//
+// Honest simplification: mid-season B/C events don't get individual Race-week
+// microcycles in this version — blocks + the fixed A-event peak/taper. Noted
+// as a future enhancement, not silently dropped.
 
-export type PhaseName = "Base" | "Build" | "Peak" | "Taper" | "Race" | "Recover";
+export type Sport = "cycle" | "run" | "swim";
 export type Focus = "endurance" | "vo2" | "threshold" | "race";
 export type Priority = "A" | "B" | "C";
+export type PhaseName = "Base" | "Build" | "Peak" | "Taper" | "Race" | "Recover";
+export type StrengthIntent = "accumulation" | "intensification" | "realization" | "deload" | "none";
 
 export interface RaceEvent {
   dateISO: string;
   name: string;
   priority: Priority;
 }
-
+export interface StrengthWeek {
+  sessions: number;
+  intent: StrengthIntent;
+  notes: string;
+}
 export interface WeekPlan {
-  week: number;            // chronological, 1 = furthest from final event
+  week: number;
+  block: number;           // macroblock index; 0 = tail (peak/taper)
   phase: PhaseName;
   hours: number;
   tss: number;
   ifVal: number;
   focus: string;
-  event?: string;          // event name on a Race / final-Taper week
+  event?: string;
+  strength: StrengthWeek;
 }
-
+export interface MacroBlock {
+  block: number;
+  focus: Focus;
+  weeks: number;
+  peakHours: number;
+}
 export interface Plan {
   weeksTotal: number;
+  sport: Sport;
   ftp: number;
-  endHours: number;        // volume in the final (taper) week
-  events: RaceEvent[];      // as consumed (sorted; final promoted to A)
+  endHours: number;
+  blocks: MacroBlock[];
+  events: RaceEvent[];
   weeks: WeekPlan[];
 }
 
-const IF: Record<PhaseName, number> = {
-  Base: 0.72, Build: 0.88, Peak: 0.95, Taper: 0.55, Race: 0.95, Recover: 0.5,
+// --- sport specifications -------------------------------------------------
+interface SportSpec {
+  // IF per phase
+  ifBase: number; ifBuild: number; ifPeak: number; ifTaper: number; ifRecover: number;
+  gain: number;       // volume ramp per work week
+  rampCap: number;    // max +% of START added per week (stops runaway compounding)
+  maxPeak: number;    // hard weekly-*hours* ceiling even if user set higher
+  focusBase: string;
+}
+const SPORT: Record<Sport, SportSpec> = {
+  cycle: {
+    ifBase: 0.72, ifBuild: 0.88, ifPeak: 0.95, ifTaper: 0.55, ifRecover: 0.5,
+    gain: 0.08, rampCap: 0.25, maxPeak: 20,
+    focusBase: "Long steady endurance (Z2)",
+  },
+  run: {
+    ifBase: 0.72, ifBuild: 0.88, ifPeak: 0.92, ifTaper: 0.6, ifRecover: 0.55,
+    gain: 0.06, rampCap: 0.18, maxPeak: 15,   // stricter: impact-load injury risk
+    focusBase: "Easy base mileage + strides",
+  },
+  swim: {
+    ifBase: 0.75, ifBuild: 0.9, ifPeak: 0.98, ifTaper: 0.65, ifRecover: 0.6,
+    gain: 0.05, rampCap: 0.15, maxPeak: 14,   // least certain (swim load not normalized)
+    focusBase: "Technique + base volume",
+  },
 };
-const GAIN_PER_WEEK = 0.08; // +8% volume per work week
 
-// Volume does NOT compound forever: cap the season's peak weekly volume at
-// maxWorkHours (a user input — "max weekly hours your schedule allows").
-// Without a ceiling, weekly hours would compound to physically absurd values
-// on long seasons (regression: 12h start once exploded to 62h/week).
+// Strength periodizes opposite to the aerobic peak.
+const STRENGTH_BY_PHASE: Record<PhaseName, StrengthWeek> = {
+  Base:    { sessions: 3, intent: "accumulation",     notes: "Heavy-low reps (strength base)" },
+  Build:   { sessions: 2, intent: "intensification",  notes: "Heavy + some ballistic" },
+  Peak:    { sessions: 1, intent: "realization",      notes: "Maintain top strength, low volume" },
+  Race:    { sessions: 1, intent: "realization",      notes: "Low-volume explosive" },
+  Recover: { sessions: 1, intent: "deload",           notes: "Unload / mobility" },
+  Taper:   { sessions: 0, intent: "none",             notes: "Drop strength, full recovery" },
+};
 
-export function buildPlan(events: RaceEvent[], ftp: number, startHours: number, focus: Focus, maxWorkHours: number): Plan {
+const BLOCK_WORK = 4;       // work weeks per block then a recover transition
+const TAPER_WEEKS = 2;
+
+export function buildPlan(
+  events: RaceEvent[], ftp: number, startHours: number,
+  focus: Focus, maxWorkHours: number, sport: Sport,
+): Plan {
+  const spec = SPORT[sport];
   const sorted = [...events].sort((a, b) => a.dateISO.localeCompare(b.dateISO));
   const finalIdx = sorted.length - 1;
   const consumed = sorted.map((e, i) => (i === finalIdx ? { ...e, priority: "A" as Priority } : e));
+  const aEvent = consumed[finalIdx];
 
-  const totalWeeks = Math.max(4, Math.round(weeksBetween(consumed[finalIdx].dateISO)));
-  const baseW = Math.max(2, Math.round(totalWeeks * 0.4));
-  const peakW = Math.max(1, Math.round(totalWeeks * 0.15));
-  const taperW = 2;
-  const taperStart = totalWeeks - taperW + 1;   // first Taper week
-  const peakStart = totalWeeks - taperW - peakW + 1; // first Peak week
-  const buildStart = baseW + 1;
-  const buildEnd = peakStart - 1;
-  const hasBuildRegion = buildStart <= buildEnd;
+  const totalWeeks = Math.max(4, Math.round(weeksBetween(aEvent.dateISO)));
+  const peakW = Math.max(1, Math.round(totalWeeks * 0.12));
+  const taperW = TAPER_WEEKS;
+  const front = totalWeeks - peakW - taperW;           // block region
+  const maxPeak = Math.min(Math.max(maxWorkHours, startHours), spec.maxPeak);
 
-  // Pin B/C events into the Build region as Race/Recover microcycles
-  const microcycles = new Map<string, { race: number; recover: number }>();
-  if (hasBuildRegion) {
-    for (const ev of consumed.slice(0, finalIdx)) {
-      const ew = weeksBetween(ev.dateISO);
-      const race = clamp(ew, buildStart, buildEnd);
-      const recover = (race < buildEnd) ? race + 1 : -1;
-      microcycles.set(ev.name, { race, recover });
-    }
+  // Precompute the week index for each B/C event (clamped into the block region),
+  // so an earlier event can get a Race week + Recover transition.
+  const eventAt = new Map<number, string>();
+  for (const ev of consumed.slice(0, finalIdx)) {
+    const ew = clamp(Math.round(weeksBetween(ev.dateISO)), 1, front);
+    eventAt.set(ew, ev.name);
   }
 
+  // --- plan phases + macroblocks over the front region ---
+  const phases = new Array<PhaseName>(totalWeeks + 1); // 1-indexed
+  const blockNo = new Array<number>(totalWeeks + 1).fill(0);
+  const blocks: MacroBlock[] = [];
+  let cursor = 1, bIdx = 1;
+  while (cursor <= front) {
+    const remaining = front - cursor + 1;
+    const workW = Math.min(BLOCK_WORK, remaining);
+    const focusN = blockFocus(bIdx, focus);
+    blocks.push({ block: bIdx, focus: focusN, weeks: workW, peakHours: 0 });
+    for (let i = 0; i < workW; i++) {
+      const w = cursor + i;
+      phases[w] = "Build";
+      blockNo[w] = bIdx;
+    }
+    cursor += workW;
+    // trailing recover week (only if it fits and isn't the last block)
+    if (cursor <= front) { phases[cursor] = "Recover"; blockNo[cursor] = 0; cursor++; }
+    bIdx++;
+  }
+
+  // tail: Peak into A event, then Taper
+  for (let w = Math.max(1, front + 1); w <= totalWeeks; w++) {
+    phases[w] = (w >= totalWeeks - taperW + 1) ? "Taper" : "Peak";
+  }
+
+  // Carve Race + Recover microcycles around B/C events (ascending, so a
+  // recover doesn't clobber the next event's week).
+  const evWeeks = [...eventAt.keys()].sort((a, b) => a - b);
+  for (const ew of evWeeks) {
+    if (ew <= front) phases[ew] = "Race";
+    if (ew + 1 <= front && !eventAt.has(ew + 1)) phases[ew + 1] = "Recover";
+  }
+
+  // --- volume + strength per week ---
   const weeks: WeekPlan[] = [];
-  let lastWork = startHours;   // hours of the most recent full work week (progressive-overload anchor)
-  const RAMP_CAP = 0.25;       // never add more than +25% of START per week (stops runaway compounding)
+  let lastWork = startHours;
+  let blockBase = startHours;
   for (let w = 1; w <= totalWeeks; w++) {
-    const { phase, event } = phaseFor(w);
+    const phase = phases[w];
     let hours: number;
     if (phase === "Taper") {
-      // anchor to the achieved (build) peak: cut to 60% then 40% — ends low, as a taper must
-      hours = lastWork * (w === taperStart ? 0.6 : 0.4);
+      hours = lastWork * (w === totalWeeks - 1 ? 0.4 : 0.6);
     } else if (phase === "Recover") {
-      hours = lastWork * 0.5;   // deload, does not advance the overload anchor
+      hours = blockBase * 0.5;             // deload; reset the next block's base
+      blockBase = Math.max(hours, 2);
     } else if (phase === "Peak") {
-      hours = lastWork * 0.9;   // ~10% cut from the build peak, does NOT advance the taper anchor
+      hours = lastWork * 0.9;             // ~10% cut; does not feed a giant taper
     } else {
-      // Base / Build / Race: progressive overload +8%, capped to +25% of the
-      // START volume per week (not +25% of last week — that's what exploded),
-      // and NEVER above the season peak ceiling. Long seasons plateau.
-      hours = Math.min(
-        lastWork * (1 + GAIN_PER_WEEK),        // slow ramp
-        lastWork + startHours * RAMP_CAP,      // +25% of start, not last week
-        maxWorkHours,                          // user's sustainable ceiling — long seasons plateau here
-      );
-      lastWork = hours;
+      // Build / Base / Race work week: progressive within block from blockBase
+      hours = Math.min(lastWork * (1 + spec.gain), lastWork + startHours * spec.rampCap, maxPeak);
     }
     hours = Math.max(2, hours);
-    weeks.push(mk(w, phase, hours, event, focus));
+    const eventName = phase === "Taper" ? aEvent.name : eventAt.get(w);
+    const rec = buildWeek(w, blockNo[w] || blocks.length, phase, hours, eventName, focusOf(blockNo[w], blocks, focus, spec), sport);
+    weeks.push(rec);
+    // track block peak
+    if (blockNo[w] > 0) blocks[blockNo[w] - 1].peakHours = Math.max(blocks[blockNo[w] - 1].peakHours, hours);
+    lastWork = hours;
+    if (phase !== "Recover" && phase !== "Taper") blockBase = lastWork;
   }
 
+  return { weeksTotal: totalWeeks, sport, ftp, endHours: Math.round(weeks[totalWeeks - 1]!.hours * 10) / 10, blocks, events: consumed, weeks };
+}
+
+function blockFocus(bIdx: number, season: Focus): Focus {
+  const seq: Focus[] = ["endurance", "vo2", "threshold", "endurance", "vo2", "threshold"];
+  const base = (season === "endurance") ? "endurance" : (season === "vo2" || season === "threshold" || season === "race") ? season : "endurance";
+  // cycle through a rotating emphasis anchored on the season's dominant focus
+  if (season === "race") return seq[(bIdx - 1) % seq.length] === "race" ? "endurance" : seq[(bIdx - 1) % seq.length];
+  return seq[(bIdx - 1 + seq.indexOf(base)) % seq.length];
+}
+
+function focusOf(blockNo: number, blocks: MacroBlock[], _season: Focus, spec: SportSpec): string {
+  if (blockNo === 0) return "Sharp race-specific efforts";
+  const f = blocks[blockNo - 1].focus;
+  switch (f) {
+    case "endurance": return spec.focusBase;
+    case "threshold": return "Threshold intervals (2-3x 12-15min)";
+    case "vo2": return "Vo2max intervals (5x 3min)";
+    default: return f;
+  }
+}
+
+function buildWeek(w: number, block: number, phase: PhaseName, hours: number,
+  event: string | undefined, focusPhrase: string, sport: Sport): WeekPlan {
+  const rh = Math.round(hours * 10) / 10;
+  const ifVal = ifFor(phase, sport);
   return {
-    weeksTotal: totalWeeks,
-    ftp,
-    endHours: Math.round((weeks[totalWeeks - 1]?.hours ?? startHours) * 10) / 10,
-    events: consumed,
-    weeks,
+    week: w, block, phase,
+    hours: rh,
+    tss: Math.round(rh * 100 * ifVal * ifVal),
+    ifVal,
+    focus: focusPhrase,
+    event,
+    strength: STRENGTH_BY_PHASE[phase],
   };
-
-  function phaseFor(w: number): { phase: PhaseName; event?: string } {
-    if (w >= taperStart) return { phase: "Taper", event: consumed[finalIdx].name };
-    if (w >= peakStart) return { phase: "Peak", event: consumed[finalIdx].name };
-    for (const [name, mc] of microcycles) {
-      if (w === mc.race) return { phase: "Race", event: name };
-      if (w === mc.recover) return { phase: "Recover" };
-    }
-    if (w <= baseW) return { phase: "Base" };
-    return { phase: "Build" };
-  }
-
-  function mk(week: number, phase: PhaseName, hours: number, event: string | undefined, f: Focus): WeekPlan {
-    const rh = Math.round(hours * 10) / 10;
-    const base: WeekPlan = {
-      week, phase,
-      hours: rh,
-      tss: Math.round(rh * 100 * IF[phase] * IF[phase]),
-      ifVal: IF[phase],
-      focus: phaseFocus(phase, f),
-    };
-    if (event) base.event = event;
-    return base;
-  }
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function phaseFocus(phase: PhaseName, f: Focus): string {
+function ifFor(phase: PhaseName, sport: Sport): number {
+  const s = SPORT[sport];
   switch (phase) {
-    case "Base": return baseDesc(f);
-    case "Build": return buildDesc(f);
-    case "Peak": return peakDesc(f);
-    case "Race": return `Race/${(f === "race") ? "readiness" : intensityWord(f)} effort`;
-    case "Recover": return "Active recovery / easy spin";
-    case "Taper": return "Low-intensity sharpen + rest";
-  }
-}
-function intensityWord(f: Focus): string {
-  return f === "endurance" ? "tempo" : f === "vo2" ? "vo2" : "threshold";
-}
-function baseDesc(f: Focus): string {
-  switch (f) {
-    case "endurance": return "Long steady endurance (Z2)";
-    case "vo2": return "Foundation volume + short efforts";
-    case "threshold": return "Foundation volume + form drills";
-    case "race": return "Foundation volume at event-specific pace";
-  }
-}
-function buildDesc(f: Focus): string {
-  switch (f) {
-    case "endurance": return "Progressively longer endurance";
-    case "vo2": return "Vo2max intervals (5-6x 3-5min)";
-    case "threshold": return "Threshold intervals (2-3x 15-20min)";
-    case "race": return "Build to race intensity";
-  }
-}
-function peakDesc(f: Focus): string {
-  switch (f) {
-    case "endurance": return "Peak endurance volume";
-    case "vo2": return "Sharp Vo2max + sprint work";
-    case "threshold": return "Sharp threshold reps";
-    case "race": return "Race rehearsals";
+    case "Base": return s.ifBase;
+    case "Build": return s.ifBuild;
+    case "Peak": return s.ifPeak;
+    case "Taper": return s.ifTaper;
+    case "Recover": return s.ifRecover;
+    case "Race": return s.ifBuild;
   }
 }
 
 export function weeksBetween(goalDateISO: string): number {
   const goal = new Date(goalDateISO + "T00:00:00");
   if (isNaN(goal.getTime())) return 12;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diffMs = goal.getTime() - today.getTime();
-  const days = diffMs / (1000 * 60 * 60 * 24);
-  if (days < 21) return 4;      // too close: minimum 4-week build
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = (goal.getTime() - today.getTime()) / 86400_000;
+  if (days < 14) return 4;
   return Math.round(days / 7);
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
 }
