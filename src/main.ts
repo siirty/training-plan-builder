@@ -130,6 +130,9 @@ function render(p: Plan) {
     el.className = `span ${w.phase.toLowerCase()}`;
     el.style.height = `${Math.round((w.tss / maxTss) * 100)}%`;
     el.title = `W${w.week} ${w.phase} · ${w.tss} TSS`;
+    el.dataset.week = String(w.week);
+    el.addEventListener("mouseover", () => highlightWeek(w.week, "timeline"));
+    el.addEventListener("click", () => scrollToWeek(w.week));
     chart.appendChild(el);
   });
 
@@ -138,11 +141,15 @@ function render(p: Plan) {
   thead.innerHTML = ["Week", "Phase", "Hrs", "IF", "TSS", "Event", "Focus", "Str", "Strength"].map(h => `<th>${h}</th>`).join("");
   const tbody = $("#planTable tbody");
   tbody.innerHTML = p.weeks.map(w => `
-    <tr class="${w.phase.toLowerCase()}">
+    <tr class="${w.phase.toLowerCase()}" data-week="${w.week}">
       <td>${w.week}</td><td>${w.phase}</td><td>${w.hours}</td>
       <td>${w.ifVal.toFixed(2)}</td><td>${w.tss}</td><td>${w.event ?? "&mdash;"}</td><td>${w.focus}</td>
       <td>${w.strength.sessions}</td><td>${w.strength.notes}</td>
     </tr>`).join("");
+  tbody.querySelectorAll("tr").forEach((tr) => {
+    const week = Number((tr as HTMLElement).dataset.week);
+    tr.addEventListener("mouseover", () => highlightWeek(week, "table"));
+  });
 
   $("#csv").onclick = () => {
     const csv = ["week,block,phase,hours,if,tss,event,focus,strength_sessions,strength_notes",
@@ -154,3 +161,23 @@ function render(p: Plan) {
     a.click();
   };
 }
+
+// timeline <-> table linkage
+function highlightWeek(week: number, from: "timeline" | "table") {
+  // clear previous highlights
+  document.querySelectorAll("#chartBody .span").forEach(el => el.classList.remove("active"));
+  document.querySelectorAll("#planTable tbody tr").forEach(el => el.classList.remove("hl"));
+  // highlight only the partner side (the source is already hovered natively)
+  if (from === "timeline") {
+    document.querySelector(`#planTable tbody tr[data-week="${week}"]`)?.classList.add("hl");
+  } else {
+    document.querySelector(`#chartBody .span[data-week="${week}"]`)?.classList.add("active");
+  }
+}
+
+function scrollToWeek(week: number) {
+  const row = document.querySelector(`#planTable tbody tr[data-week="${week}"]`);
+  row?.scrollIntoView({ block: "center", behavior: "smooth", inline: "nearest" });
+  highlightWeek(week, "timeline");
+}
+
