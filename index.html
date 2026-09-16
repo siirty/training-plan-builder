@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Periodization Plan Builder</title>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Periodization Plan Builder</h1>
+    <p class="sub">Plan a Base &rarr; Build &rarr; Peak cycle around your key event, grounded in Critical-Power / TSS modeling.</p>
+
+    <section class="card" id="inputs">
+      <h2>Your inputs</h2>
+      <div class="grid">
+        <label>Goal / event date
+          <input type="date" id="goal-date" />
+        </label>
+        <label>Current FTP / CP (W)
+          <input type="number" id="ftp" min="50" max="600" value="240" />
+        </label>
+        <label>Current weekly volume (h)
+          <input type="number" id="hours" min="1" max="30" step="0.5" value="6" />
+        </label>
+        <label>Focus
+          <select id="focus">
+            <option value="endurance">Base/endurance</option>
+            <option value="vo2">VO2max</option>
+            <option value="threshold">Threshold</option>
+            <option value="race">Race readiness</option>
+          </select>
+        </label>
+      </div>
+      <button id="go">Build plan</button>
+    </section>
+
+    <section class="card" id="summary" hidden>
+      <h2>Plan summary</h2>
+      <div id="summaryBody" class="kv"></div>
+    </section>
+
+    <section class="card" id="chart" hidden>
+      <h2>Weekly load (TSS)</h2>
+      <div id="chartBody"></div>
+    </section>
+
+    <section class="card" id="grid" hidden>
+      <h2>Weekly sessions</h2>
+      <table id="planTable">
+        <thead><tr></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button id="csv">Export CSV</button>
+    </section>
+  </main>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
