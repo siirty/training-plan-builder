@@ -97,8 +97,9 @@ const STRENGTH_BY_PHASE: Record<PhaseName, StrengthWeek> = {
   Taper:   { sessions: 0, intent: "none",             notes: "Drop strength, full recovery" },
 };
 
-const BLOCK_WORK = 4;       // work weeks per block then a recover transition
+const BLOCK_WORK = 4;       // work weeks per cycle (then a recover transition)
 const TAPER_WEEKS = 2;
+const PEAK_WEEKS = 1;
 
 export function buildPlan(
   events: RaceEvent[], ftp: number, startHours: number,
@@ -111,86 +112,106 @@ export function buildPlan(
   const aEvent = consumed[finalIdx];
 
   const totalWeeks = Math.max(4, Math.round(weeksBetween(aEvent.dateISO)));
-  const peakW = Math.max(1, Math.round(totalWeeks * 0.12));
-  const taperW = TAPER_WEEKS;
-  const front = totalWeeks - peakW - taperW;           // block region
   const maxPeak = Math.min(Math.max(maxWorkHours, startHours), spec.maxPeak);
 
-  // Precompute the week index for each B/C event (clamped into the block region),
-  // so an earlier event can get a Race week + Recover transition.
-  const eventAt = new Map<number, string>();
-  for (const ev of consumed.slice(0, finalIdx)) {
-    const ew = clamp(Math.round(weeksBetween(ev.dateISO)), 1, front);
-    eventAt.set(ew, ev.name);
+  // --- true multi-cycle season: partition into cycles, each building on the last ---
+  // A B/C event is the final (Race) work week of its cycle; the event's cycle ends
+  // with a recover transition unless it is the season's final cycle. Long gaps with
+  // no event split into sequential 4-work + 1-recover cycles, so a 51-week horizon
+  // is NEVER one monotonic build. The final cycle caps with Peak + Taper at the A event.
+  const eventWeeks: { week: number; name: string; isA: boolean }[] = [];
+  for (let i = 0; i < finalIdx; i++) {
+    const ew = clamp(Math.round(weeksBetween(consumed[i].dateISO)), 1, totalWeeks - TAPER_WEEKS - PEAK_WEEKS);
+    eventWeeks.push({ week: ew, name: consumed[i].name, isA: false });
   }
+  eventWeeks.push({ week: totalWeeks, name: aEvent.name, isA: true });
+  eventWeeks.sort((x, y) => x.week - y.week);
 
-  // --- plan phases + macroblocks over the front region ---
-  const phases = new Array<PhaseName>(totalWeeks + 1); // 1-indexed
-  const blockNo = new Array<number>(totalWeeks + 1).fill(0);
-  const blocks: MacroBlock[] = [];
-  let cursor = 1, bIdx = 1;
-  while (cursor <= front) {
-    const remaining = front - cursor + 1;
-    const workW = Math.min(BLOCK_WORK, remaining);
-    const focusN = blockFocus(bIdx, focus);
-    blocks.push({ block: bIdx, focus: focusN, weeks: workW, peakHours: 0 });
-    for (let i = 0; i < workW; i++) {
-      const w = cursor + i;
-      phases[w] = "Build";
-      blockNo[w] = bIdx;
+  // Build a cycle partition (per week: cycle index + phase within the cycle).
+  interface Cycle { start: number; end: number; target: number }  // end = last work week
+  const weekPhase = new Array<PhaseName>(totalWeeks + 1).fill("Build");
+  const weekCycle = new Array<number>(totalWeeks + 1).fill(0);
+  const cycles: Cycle[] = [];
+
+  let cursor = 1;
+  let cIdx = 1;
+  // Walk the events (A last). Each B/C event closes a cycle at its week (a Race).
+  for (let i = 0; i < eventWeeks.length; i++) {
+    const ev = eventWeeks[i];
+    const isFinal = ev.isA;
+    const regionEnd = isFinal ? totalWeeks - TAPER_WEEKS - PEAK_WEEKS : ev.week;
+    // Split [cursor .. regionEnd] into work blocks of BLOCK_WORK (+ recover between, not trailing a region boundary unless a B/C event)
+    while (cursor <= regionEnd) {
+      const remaining = regionEnd - cursor + 1;
+      const workW = Math.min(BLOCK_WORK, remaining);
+      const start = cursor, end = cursor + workW - 1;
+      for (let w = start; w <= end; w++) { weekCycle[w] = cIdx; weekPhase[w] = "Build"; }
+      cycles.push({ start, end, target: 0 }); // target filled below
+      cIdx++;
+      cursor = end + 1;
+      if (cursor <= regionEnd) {
+        // not the end of the region: give this cycle a recover transition, unless
+        // the next region is the final tail (then Peak handles the unload)
+        weekPhase[cursor] = "Recover"; weekCycle[cursor] = 0; cursor++;
+      }
     }
-    cursor += workW;
-    // trailing recover week (only if it fits and isn't the last block)
-    if (cursor <= front) { phases[cursor] = "Recover"; blockNo[cursor] = 0; cursor++; }
-    bIdx++;
+    // The B/C event week is the LAST work week of the region -> mark Race (it is `regionEnd` for B/C)
+    if (!isFinal && ev.week >= 1 && ev.week <= totalWeeks - TAPER_WEEKS - PEAK_WEEKS) {
+      weekPhase[ev.week] = "Race";
+      // following recover handled above (cursor advanced past it) or is the recover after this cycle
+    }
   }
 
-  // tail: Peak into A event, then Taper
-  for (let w = Math.max(1, front + 1); w <= totalWeeks; w++) {
-    phases[w] = (w >= totalWeeks - taperW + 1) ? "Taper" : "Peak";
+  // Final tail: Peak then Taper into A event
+  const peakStart = totalWeeks - TAPER_WEEKS - PEAK_WEEKS + 1;
+  for (let w = peakStart; w <= totalWeeks; w++) {
+    weekPhase[w] = w > totalWeeks - TAPER_WEEKS ? "Taper" : "Peak";
+    weekCycle[w] = 0;
   }
 
-  // Carve Race + Recover microcycles around B/C events (ascending, so a
-  // recover doesn't clobber the next event's week).
-  const evWeeks = [...eventAt.keys()].sort((a, b) => a - b);
-  for (const ew of evWeeks) {
-    if (ew <= front) phases[ew] = "Race";
-    if (ew + 1 <= front && !eventAt.has(ew + 1)) phases[ew + 1] = "Recover";
-  }
+  // --- per-cycle targets step up toward the season peak (theory: each macrocycle builds on the last) ---
+  const workCycles = cycles; // `cycles` holds ONLY work weeks (recover/tail weeks have weekCycle=0 and are not pushed)
+  const nWork = Math.max(1, workCycles.length);
+  const targetFor = (k: number): number => {
+    // cycle k (1-based): starts at ~startHours, rises toward maxPeak as the season progresses
+    const margin = Math.min(0.25, (maxPeak - startHours) / Math.max(1, nWork));
+    return clamp(startHours * (1 + margin * (k - 1)), startHours, maxPeak);
+  };
+  for (let i = 0; i < workCycles.length; i++) workCycles[i].target = targetFor(i + 1);
 
-  // --- volume + strength per week ---
+  // --- volume per week ---
   const weeks: WeekPlan[] = [];
-  let lastWork = startHours;
-  const overload: { v: number } = { v: startHours }; // advances ONLY on work weeks
+  let curOverload = startHours;   // overload anchor: advances on work weeks
   for (let w = 1; w <= totalWeeks; w++) {
-    const phase = phases[w];
+    const phase = weekPhase[w];
+    const cyc = workCycles[weekCycle[w] - 1];
     let hours: number;
     if (phase === "Taper") {
-      // taper descends to its lightest AT the event: penultimate 0.6, final (event) week 0.4
-      hours = overload.v * (w === totalWeeks ? 0.4 : 0.6);
-    } else if (phase === "Recover") {
-      hours = overload.v * 0.5;             // deload THIS week; do not drag the anchor down
+      hours = curOverload * (w === totalWeeks ? 0.4 : 0.6); // lightest AT the event
     } else if (phase === "Peak") {
-      hours = overload.v * 0.9;             // ~10% cut from the build peak
+      hours = curOverload * 0.9; // ~10% cut from the build peak; doesn't feed a giant taper
+    } else if (phase === "Recover") {
+      hours = curOverload * 0.5; // deload THIS week; anchor not dragged down
     } else {
-      // Build / Base / Race work week: progressive overload, capped vs maxPeak
-      hours = Math.min(
-        overload.v * (1 + spec.gain),
-        overload.v + startHours * spec.rampCap,
-        maxPeak,
-      );
-      overload.v = hours;                    // work weeks push the season anchor forward
+      // Build / Base / Race work week: progressive overload within THIS cycle toward its target
+      const cap = cyc ? cyc.target : maxPeak;
+      hours = Math.min(curOverload * (1 + spec.gain), curOverload + startHours * spec.rampCap, cap);
+      curOverload = hours; // work weeks push the anchor forward
     }
     hours = Math.max(2, hours);
-    const eventName = phase === "Taper" ? aEvent.name : eventAt.get(w);
-    const rec = buildWeek(w, blockNo[w] || blocks.length, phase, hours, eventName, focusOf(blockNo[w], blocks, focus, spec), sport);
+    const eventName = phase === "Taper" ? aEvent.name : eventWeeks.find(e => e.week === w && !e.isA)?.name;
+    const rec = buildWeek(w, weekCycle[w], phase, hours, eventName, focusOf(weekCycle[w], focus, spec), sport);
     weeks.push(rec);
-    // track block peak
-    if (blockNo[w] > 0) blocks[blockNo[w] - 1].peakHours = Math.max(blocks[blockNo[w] - 1].peakHours, overload.v);
-    lastWork = hours;
+    if (weekCycle[w] > 0 && workCycles[weekCycle[w] - 1]) {
+      workCycles[weekCycle[w] - 1].target = Math.max(workCycles[weekCycle[w] - 1].target, hours);
+    }
   }
 
-  return { weeksTotal: totalWeeks, sport, ftp, endHours: Math.round(weeks[totalWeeks - 1]!.hours * 10) / 10, blocks, events: consumed, weeks };
+  const endHours = Math.round(weeks[totalWeeks - 1]!.hours * 10) / 10;
+  const blocks: MacroBlock[] = workCycles.map((c, i) => ({
+    block: i + 1, focus: blockFocus(i + 1, focus), weeks: c.end - c.start + 1, peakHours: c.target,
+  }));
+  return { weeksTotal: totalWeeks, sport, ftp, endHours, blocks, events: consumed, weeks };
 }
 
 function blockFocus(bIdx: number, season: Focus): Focus {
@@ -201,9 +222,9 @@ function blockFocus(bIdx: number, season: Focus): Focus {
   return seq[(bIdx - 1 + seq.indexOf(base)) % seq.length];
 }
 
-function focusOf(blockNo: number, blocks: MacroBlock[], _season: Focus, spec: SportSpec): string {
-  if (blockNo === 0) return "Sharp race-specific efforts";
-  const f = blocks[blockNo - 1].focus;
+function focusOf(cycleNo: number, season: Focus, spec: SportSpec): string {
+  if (cycleNo === 0) return "Sharp race-specific efforts";
+  const f = blockFocus(cycleNo, season);
   switch (f) {
     case "endurance": return spec.focusBase;
     case "threshold": return "Threshold intervals (2-3x 12-15min)";

@@ -6,12 +6,21 @@ A tiny, single-page tool that turns your **race calendar** + **FTP** + **weekly 
 
 ## What it does
 
-- **Multi-event**: add your season's races with priorities. The A (key) event gets the full Peak + 2-week Taper; B/C events get an embedded **Race week + Recover (deload) week** as microcycles in the Build region.
-- Computes season length from today to your A event, allocates Base (≈40%) → Build (≈35%) → Peak (≈15%) → Taper (2 wks).
-- **Progressive overload**: volume ramps ~+8%/work-week, capped +25% over the previous *work* week (deloads don't cap re-entry).
+- **True multi-cycle periodization**: a long season (e.g. 51 weeks) is NEVER one
+  monotonic build. It partitions into sequential macrocycles (~4 work weeks + a
+  recover transition each), each anchored to a real event. A B/C event closes its
+  cycle as a **Race** week; the A event gets the final **Peak + 2-week Taper**.
+  Per-cycle load targets **step up** toward the season peak (each macrocycle builds
+  on the last), so a multi-event or one-year season reads as a rising seasonal
+  structure, not a single flat ramp.
+- **Multi-event**: add your season's races with priorities. A (key) gets the final
+  Peak + Taper; B/C early events become Race microcycles in their cycle.
+- **Progressive overload**: volume ramps ~+8%/work-week, capped; a Recover week
+  deloads but does NOT drag the overload anchor down.
 - Load via `TSS ≈ hours × 100 × IF²` (TrainingPeaks-style); phase IFs Base 0.72 / Build 0.88 / Peak 0.95 / Race 0.95 / Recover 0.5 / Taper 0.55.
-- Taper anchored to the achieved build peak (cut to 60% then 40%) — a genuine taper, verified by regression test.
-- Renders a stepped single-hue load timeline, a full weekly table (horizontally scrollable on mobile, linked to the timeline), and CSV export.
+- Taper descends to its LIGHTEST week AT the event (60% → 40% of the build peak).
+- Renders a stepped single-hue load timeline, a full weekly table (horizontally
+  scrollable on mobile, linked to the timeline via hover/click), and CSV export.
 
 ## UI/UX (2026) — clean + calm design pass
 
