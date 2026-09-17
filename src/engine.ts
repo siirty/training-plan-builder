@@ -145,7 +145,12 @@ export function buildPlan(
       const remaining = regionEnd - cursor + 1;
       const workW = Math.min(BLOCK_WORK, remaining);
       const start = cursor, end = cursor + workW - 1;
-      for (let w = start; w <= end; w++) { weekCycle[w] = cIdx; weekPhase[w] = "Build"; }
+      // Within each cycle: first half = BASE (foundation, lighter/ifBase), second half = BUILD (quality, ifBuild)
+      const baseW = Math.ceil(workW / 2);
+      for (let w = start; w <= end; w++) {
+        weekCycle[w] = cIdx;
+        weekPhase[w] = (w - start) < baseW ? "Base" : "Build";
+      }
       cycles.push({ start, end, target: 0 }); // target filled below
       cIdx++;
       cursor = end + 1;
