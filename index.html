@@ -5,12 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Periodization Plan Builder</title>
   <script>
-    // Set theme BEFORE paint to avoid a flash: read persisted choice, else OS default.
+    // Always resolve to an explicit theme BEFORE paint to avoid both a flash and
+    // undefined CSS vars (which render transparent colors). Persisted choice wins,
+    // otherwise the OS preference sets the concrete theme.
     (function () {
       var t = null;
       try { t = localStorage.getItem("tp-theme"); } catch (e) {}
-      if (t !== "dark" && t !== "light") t = null; // no saved pref -> follow OS
-      if (t) document.documentElement.setAttribute("data-theme", t);
+      if (t !== "dark" && t !== "light") {
+        t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", t);
     })();
   </script>
 </head>

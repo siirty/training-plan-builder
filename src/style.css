@@ -3,6 +3,18 @@
    it and persists (localStorage). */
 :root {
   --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  /* safe default palette (light) — overridden once data-theme resolves */
+  --bg: #f6f8fb;
+  --card: #ffffff;
+  --ink: #1b2433;
+  --muted: #5c6b80;
+  --line: #e2e8f0;
+  --accent: #0d9488;
+  --load-1: #14b8a6;
+  --load-2: #0d9488;
+  --load-3: #0f766e;
+  --load-race: #eab308;
+  --load-muted: #cbd5e1;
 }
 [data-theme="dark"] {
   --bg: #0f1520;
