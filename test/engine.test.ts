@@ -113,6 +113,27 @@ test("final event tapers are labeled with A event", () => {
     if (w.phase === "Taper") assert.equal(w.event, "Nationals");
   }
 });
+test("multi-block season builds toward a peak (no block-to-block load decline)", () => {
+  // regression: a Recover week used to drag the overload anchor down, so each new
+  // block started LOWER than the last (declining TSS). The season must climb.
+  const b = buildPlan([ev(84, "Race", "A")], 240, 6, "endurance", 20, "cycle");
+  const buildWeeks = b.weeks.filter(w => w.phase === "Build" || w.phase === "Base" || w.phase === "Race");
+  // TSS should be (non-strictly) increasing across the whole build
+  for (let i = 1; i < buildWeeks.length; i++) {
+    assert.ok(buildWeeks[i].tss >= buildWeeks[i - 1].tss,
+      `week ${buildWeeks[i].week} tss ${buildWeeks[i].tss} < prev ${buildWeeks[i - 1].tss}`);
+  }
+});
+test("final (event) taper week is the LIGHTEST week of the season", () => {
+  // regression: the taper used to hit the *penultimate* week, leaving the last week heavier.
+  const b = buildPlan([ev(84, "Race", "A")], 240, 6, "endurance", 20, "cycle");
+  const work = b.weeks.filter(w => w.phase !== "Recover");
+  const last = b.weeks[b.weeks.length - 1];
+  assert.equal(last.phase, "Taper");
+  for (const w of work) {
+    assert.ok(last.hours <= w.hours, `final week ${last.hours}h heavier than ${w.phase} ${w.hours}h`);
+  }
+});
 test("events sorted, final promoted to A", () => {
   assert.equal(multi.events[multi.events.length - 1].name, "Nationals");
   assert.equal(multi.events[multi.events.length - 1].priority, "A");
