@@ -83,6 +83,23 @@ test("blocks rotate focus (not all identical)", () => {
   const focuses = longP.blocks.map(b => b.focus);
   assert.ok(new Set(focuses).size > 1, `focuses did not rotate: ${focuses}`);
 });
+test("very long season is TRUE multi-cycle (several step-up cycles, not one monotonic build)", () => {
+  // regression: a 51-week single-event season must partition into many cycles
+  // whose targets step UP toward the season peak, each ending near a recover.
+  const y = buildPlan([ev(357, "Nationals", "A")], 240, 6, "endurance", 20, "cycle");
+  assert.ok(y.blocks.length >= 6, `expected >=6 cycles, got ${y.blocks.length}`);
+  // cycle targets should be strictly increasing (each macrocycle builds on the last)
+  const targets = y.blocks.map(b => b.peakHours);
+  for (let i = 1; i < targets.length; i++) {
+    assert.ok(targets[i] > targets[i - 1], `cycle ${i} peak ${targets[i]} not > ${targets[i - 1]}`);
+  }
+  // final cycle should end near the max weekly-hours ceiling, tapering lightest at the event
+  const lastCyclePeak = targets[targets.length - 1];
+  assert.ok(lastCyclePeak <= 20.1 && lastCyclePeak > 10, `final peak ${lastCyclePeak} implausible`);
+  const last = y.weeks[y.weeks.length - 1];
+  assert.equal(last.phase, "Taper");
+  assert.ok(last.hours < y.weeks[y.weeks.length - 2].hours, "taper must descend to lightest at the event");
+});
 test("every work week carries strength guidance", () => {
   for (const w of longP.weeks) {
     assert.ok(w.strength && typeof w.strength.sessions === "number", `week ${w.week} missing strength`);
