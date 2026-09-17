@@ -126,12 +126,20 @@ button.secondary { background: transparent; color: var(--accent); border: 1px so
 .lg i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 
 /* -- phase-timeline hero (single hue ramp + accents) ------------------------ */
-.timeline { display: flex; height: 150px; align-items: flex-end; gap: 2px; margin: 14px 0 4px; }
+.timeline {
+  display: flex;
+  align-items: flex-end;
+  height: 150px;
+  gap: 2px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+}
 .timeline .span {
-  flex: 1;
+  flex: 1 0;
+  min-width: 14px;   /* guarantee a tap/scroll target, regardless of week count */
   border-radius: 3px 3px 0 0;
   opacity: .92;
-  min-width: 6px;
   cursor: pointer;
   transition: opacity .15s, filter .15s;
   position: relative;

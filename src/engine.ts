@@ -161,29 +161,33 @@ export function buildPlan(
   // --- volume + strength per week ---
   const weeks: WeekPlan[] = [];
   let lastWork = startHours;
-  let blockBase = startHours;
+  const overload: { v: number } = { v: startHours }; // advances ONLY on work weeks
   for (let w = 1; w <= totalWeeks; w++) {
     const phase = phases[w];
     let hours: number;
     if (phase === "Taper") {
-      hours = lastWork * (w === totalWeeks - 1 ? 0.4 : 0.6);
+      // taper descends to its lightest AT the event: penultimate 0.6, final (event) week 0.4
+      hours = overload.v * (w === totalWeeks ? 0.4 : 0.6);
     } else if (phase === "Recover") {
-      hours = blockBase * 0.5;             // deload; reset the next block's base
-      blockBase = Math.max(hours, 2);
+      hours = overload.v * 0.5;             // deload THIS week; do not drag the anchor down
     } else if (phase === "Peak") {
-      hours = lastWork * 0.9;             // ~10% cut; does not feed a giant taper
+      hours = overload.v * 0.9;             // ~10% cut from the build peak
     } else {
-      // Build / Base / Race work week: progressive within block from blockBase
-      hours = Math.min(lastWork * (1 + spec.gain), lastWork + startHours * spec.rampCap, maxPeak);
+      // Build / Base / Race work week: progressive overload, capped vs maxPeak
+      hours = Math.min(
+        overload.v * (1 + spec.gain),
+        overload.v + startHours * spec.rampCap,
+        maxPeak,
+      );
+      overload.v = hours;                    // work weeks push the season anchor forward
     }
     hours = Math.max(2, hours);
     const eventName = phase === "Taper" ? aEvent.name : eventAt.get(w);
     const rec = buildWeek(w, blockNo[w] || blocks.length, phase, hours, eventName, focusOf(blockNo[w], blocks, focus, spec), sport);
     weeks.push(rec);
     // track block peak
-    if (blockNo[w] > 0) blocks[blockNo[w] - 1].peakHours = Math.max(blocks[blockNo[w] - 1].peakHours, hours);
+    if (blockNo[w] > 0) blocks[blockNo[w] - 1].peakHours = Math.max(blocks[blockNo[w] - 1].peakHours, overload.v);
     lastWork = hours;
-    if (phase !== "Recover" && phase !== "Taper") blockBase = lastWork;
   }
 
   return { weeksTotal: totalWeeks, sport, ftp, endHours: Math.round(weeks[totalWeeks - 1]!.hours * 10) / 10, blocks, events: consumed, weeks };
