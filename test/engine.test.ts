@@ -130,16 +130,27 @@ test("final event tapers are labeled with A event", () => {
     if (w.phase === "Taper") assert.equal(w.event, "Nationals");
   }
 });
-test("multi-block season builds toward a peak (no block-to-block load decline)", () => {
-  // regression: a Recover week used to drag the overload anchor down, so each new
-  // block started LOWER than the last (declining TSS). The season must climb.
-  const b = buildPlan([ev(84, "Race", "A")], 240, 6, "endurance", 20, "cycle");
-  const buildWeeks = b.weeks.filter(w => w.phase === "Build" || w.phase === "Base" || w.phase === "Race");
-  // TSS should be (non-strictly) increasing across the whole build
-  for (let i = 1; i < buildWeeks.length; i++) {
-    assert.ok(buildWeeks[i].tss >= buildWeeks[i - 1].tss,
-      `week ${buildWeeks[i].week} tss ${buildWeeks[i].tss} < prev ${buildWeeks[i - 1].tss}`);
+test("each cycle's PEAK load rises toward the season peak (sawtooth, not monotonic ramp)", () => {
+  // Within a cycle the load climbs Base->Build then drops at Recover; the
+  // invariant is that each successive cycle peaks HIGHER than the last, and
+  // the season's final (Peak/Taper) is the true max. (Old assertion of
+  // week-over-week monotonicity was wrong once Base re-entered cycles.)
+  const b = buildPlan([ev(357, "Race", "A")], 240, 6, "endurance", 20, "cycle");
+  // per-cycle peak TSS (work weeks only, keyed by block)
+  const peaksByBlock = new Map<number, number>();
+  for (const w of b.weeks) {
+    if (w.block > 0) peaksByBlock.set(w.block, Math.max(peaksByBlock.get(w.block) ?? 0, w.tss));
   }
+  const peaks = [...peaksByBlock.values()];
+  assert.ok(peaks.length >= 6, `expected >=6 cycles, got ${peaks.length}`);
+  for (let i = 1; i < peaks.length; i++) {
+    assert.ok(peaks[i] >= peaks[i - 1] + 1e-6, `cycle ${i} peak ${peaks[i]} < prev ${peaks[i - 1]}`);
+  }
+  // season max sits in the final tail (Peak/Taper week), which uses the highest IF
+  const seasonMax = Math.max(...b.weeks.map(w => w.tss));
+  const tailWeeks = b.weeks.filter(w => w.phase === "Peak" || w.phase === "Taper");
+  const tailMax = Math.max(...tailWeeks.map(w => w.tss));
+  assert.equal(seasonMax, tailMax, "the season's highest load must be the Peak week(s) before the event");
 });
 test("final (event) taper week is the LIGHTEST week of the season", () => {
   // regression: the taper used to hit the *penultimate* week, leaving the last week heavier.
