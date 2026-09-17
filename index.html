@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Periodization Plan Builder</title>
+  <script>
+    // Always resolve to an explicit theme BEFORE paint to avoid both a flash and
+    // undefined CSS vars (which render transparent colors). Persisted choice wins,
+    // otherwise the OS preference sets the concrete theme.
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem("tp-theme"); } catch (e) {}
+      if (t !== "dark" && t !== "light") {
+        t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
+  <script type="module" crossorigin src="./assets/index-ToPDckMd.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DXZ4aqOq.css">
+</head>
+<body>
+  <button class="theme-toggle" id="themeToggle" title="Toggle theme" aria-label="Toggle dark / light theme">◐</button>
+  <main class="wrap">
+    <h1>Periodization Plan Builder</h1>
+    <p class="sub">Plan a multi-event season around a key (A) target, grounded in Critical-Power / TSS modeling.</p>
+
+    <section class="card" id="inputs">
+      <h2>1 · Events</h2>
+      <div id="event-list"></div>
+      <button id="add-event" class="ghost">+ Add event</button>
+
+      <h2 class="mt">2 · You</h2>
+      <div class="grid">
+        <label>Current FTP / CP (W)
+          <input type="number" id="ftp" min="50" max="600" value="240" />
+        </label>
+        <label>Current weekly volume (h)
+          <input type="number" id="hours" min="1" max="30" step="0.5" value="6" />
+        </label>
+        <label>Max weekly volume (h) <span class="hint">your sustainable ceiling</span>
+          <input type="number" id="maxhours" min="4" max="40" step="1" value="20" />
+        </label>
+        <label>Sport
+          <select id="sport">
+            <option value="cycle">Cycling / Spinning</option>
+            <option value="run">Running</option>
+            <option value="swim">Swimming</option>
+          </select>
+        </label>
+        <label>Focus
+          <select id="focus">
+            <option value="endurance">Base/endurance</option>
+            <option value="vo2">VO2max</option>
+            <option value="threshold">Threshold</option>
+            <option value="race">Race readiness</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section class="card" id="summary" hidden>
+      <h2>Plan summary</h2>
+      <div id="summaryBody" class="kv"></div>
+      <div id="phaseLegend" class="legend"></div>
+    </section>
+
+    <section class="card" id="chart" hidden>
+      <h2>Weekly load (TSS)</h2>
+      <div id="chartBody" class="timeline"></div>
+    </section>
+
+    <section class="card" id="grid" hidden>
+      <h2>Weekly sessions</h2>
+      <div class="table-scroll">
+        <table id="planTable">
+          <thead><tr></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <button id="csv">Export CSV</button>
+    </section>
+
+    <p class="disc">This tool generates <b>sensible defaults, not coaching advice</b>. Phase splits, intensity factors (IF), and volume ramps are reasonable approximations; adapt them to your training history and, ideally, a coach. No medical/training liability implied.</p>
+  </main>
+</body>
+</html>
